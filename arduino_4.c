@@ -1,3 +1,4 @@
+// Structure Definition
 struct EnergyUsage {
     uint8_t fanStatus;      // 1 means fan is ON, 0 means OFF
     uint8_t lightStatus;    // 1 means light is ON, 0 means OFF
@@ -6,18 +7,30 @@ struct EnergyUsage {
     uint16_t timestamp;     // Time tracking (in minutes)
 };
 
-EnergyUsage energyData; // Create an instance of the EnergyUsage structure
+// Function Prototypes
+void parseAndUpdateEnergyUsage(String data);
+void saveToEEPROM(int startAddress, EnergyUsage usage);
+EnergyUsage readFromEEPROM(int startAddress);
+void writeEEPROM(int address, uint8_t data);
+uint8_t readEEPROM(int address);
+void printEnergyUsage(EnergyUsage usage);
+
+// Global variable for Energy Data
+EnergyUsage energyData;
 
 void setup() {
     Serial.begin(9600); // Start Serial communication
     Serial.println("Master setup complete");
 
-    // Set initial values for the energy data
+    // Initialize energy data with default values
     energyData.fanStatus = 0;
     energyData.lightStatus = 0;
     energyData.fanDuration = 0;
     energyData.lightDuration = 0;
     energyData.timestamp = 0;
+
+    // Load any previously saved data from EEPROM
+    energyData = readFromEEPROM(0);
 }
 
 void loop() {
@@ -46,114 +59,73 @@ void parseAndUpdateEnergyUsage(String data) {
         return; // Exit if format is incorrect
     }
 
-    String key = data.substring(0, delimiterIndex); // Get the key part of the data
-    String value = data.substring(delimiterIndex + 1); // Get the value part
+    String key = data.substring(0, delimiterIndex); // Extract key part
+    String value = data.substring(delimiterIndex + 1); // Extract value part
 
-    if (key == "1") {
-        energyData.fanStatus = value.toInt(); // Update fan status based on input
-    } else if (key == "3") {
-        energyData.lightStatus = (value == "ON") ? 1 : 0; // Update light status
+    if (key == "2") { // Update fan status
+        energyData.fanStatus = value.toInt();
+    } else if (key == "3") { // Update light status
+        energyData.lightStatus = value.toInt();
     } else {
         Serial.println("Unknown key, skipping...");
     }
 
-    energyData.timestamp++; // Increment timestamp for each update
-    if (energyData.fanStatus) energyData.fanDuration++; // Increase fan duration if it's ON
-    if (energyData.lightStatus) energyData.lightDuration++; // Increase light duration if it's ON
+    // Increment durations and timestamp
+    energyData.timestamp++;
+    if (energyData.fanStatus) energyData.fanDuration++;
+    if (energyData.lightStatus) energyData.lightDuration++;
 }
 
 void saveToEEPROM(int startAddress, EnergyUsage usage) {
-    // Write fan status
-    EEARL = startAddress; // Set low address
-    EEARH = 0;            // Set high address (0 for 1KB EEPROM)
-    EEDR = usage.fanStatus; // Load data into EEDR
-    EEMPE = 1;            // Enable master write
-    EEPE = 1;             // Start write operation
+    writeEEPROM(startAddress, usage.fanStatus);           // Fan Status
+    writeEEPROM(startAddress + 1, usage.lightStatus);     // Light Status
 
-    // Write light status
-    EEARL = startAddress + 1;
-    EEDR = usage.lightStatus;
-    EEMPE = 1;
-    EEPE = 1;
+    writeEEPROM(startAddress + 2, usage.fanDuration & 0xFF);       // Fan Duration Low Byte
+    writeEEPROM(startAddress + 3, (usage.fanDuration >> 8) & 0xFF);// Fan Duration High Byte
 
-    // Write fan duration
-    EEARL = startAddress + 2;
-    EEDR = usage.fanDuration & 0xFF; // Low byte
-    EEMPE = 1;
-    EEPE = 1;
+    writeEEPROM(startAddress + 4, usage.lightDuration & 0xFF);     // Light Duration Low Byte
+    writeEEPROM(startAddress + 5, (usage.lightDuration >> 8) & 0xFF);// Light Duration High Byte
 
-    EEARL = startAddress + 3;
-    EEDR = (usage.fanDuration >> 8) & 0xFF; // High byte
-    EEMPE = 1;
-    EEPE = 1;
-
-    // Write light duration
-    EEARL = startAddress + 4;
-    EEDR = usage.lightDuration & 0xFF; // Low byte
-    EEMPE = 1;
-    EEPE = 1;
-
-    EEARL = startAddress + 5;
-    EEDR = (usage.lightDuration >> 8) & 0xFF; // High byte
-    EEMPE = 1;
-    EEPE = 1;
-
-    // Write timestamp
-    EEARL = startAddress + 6;
-    EEDR = usage.timestamp & 0xFF; // Low byte
-    EEMPE = 1;
-    EEPE = 1;
-
-    EEARL = startAddress + 7;
-    EEDR = (usage.timestamp >> 8) & 0xFF; // High byte
-    EEMPE = 1;
-    EEPE = 1;
+    writeEEPROM(startAddress + 6, usage.timestamp & 0xFF);         // Timestamp Low Byte
+    writeEEPROM(startAddress + 7, (usage.timestamp >> 8) & 0xFF);  // Timestamp High Byte
 }
+
 EnergyUsage readFromEEPROM(int startAddress) {
     EnergyUsage usage;
 
-    // Read fan status
-    EEARL = startAddress;
-    EERE = 1; // Trigger read
-    usage.fanStatus = EEDR;
+    usage.fanStatus = readEEPROM(startAddress);               // Fan Status
+    usage.lightStatus = readEEPROM(startAddress + 1);         // Light Status
 
-    // Read light status
-    EEARL++;
-    EERE = 1;
-    usage.lightStatus = EEDR;
+    usage.fanDuration = readEEPROM(startAddress + 2);         // Fan Duration Low Byte
+    usage.fanDuration |= (readEEPROM(startAddress + 3) << 8); // Fan Duration High Byte
 
-    // Read fan duration
-    EEARL += 2;
-    EERE = 1;
-    usage.fanDuration = EEDR; // Low byte
+    usage.lightDuration = readEEPROM(startAddress + 4);       // Light Duration Low Byte
+    usage.lightDuration |= (readEEPROM(startAddress + 5) << 8); // Light Duration High Byte
 
-    EEARL++;
-    EERE = 1;
-    usage.fanDuration |= (EEDR << 8); // High byte
+    usage.timestamp = readEEPROM(startAddress + 6);           // Timestamp Low Byte
+    usage.timestamp |= (readEEPROM(startAddress + 7) << 8);   // Timestamp High Byte
 
-    // Read light duration
-    EEARL += 2;
-    EERE = 1;
-    usage.lightDuration = EEDR; // Low byte
-
-    EEARL++;
-    EERE = 1;
-    usage.lightDuration |= (EEDR << 8); // High byte
-
-    // Read timestamp
-    EEARL += 2;
-    EERE = 1;
-    usage.timestamp = EEDR; // Low byte
-
-    EEARL++;
-    EERE = 1;
-    usage.timestamp |= (EEDR << 8); // High byte
-
-    return usage; // Return populated structure
+    return usage;
 }
+
+void writeEEPROM(int address, uint8_t data) {
+    while (EECR & (1 << EEPE)); // Wait for completion of previous write
+    EEAR = address;            // Set EEPROM address
+    EEDR = data;               // Set EEPROM data register
+    EECR |= (1 << EEMPE);      // Master Write Enable
+    EECR |= (1 << EEPE);       // Start EEPROM write
+}
+
+uint8_t readEEPROM(int address) {
+    while (EECR & (1 << EEPE)); // Wait for completion of previous write
+    EEAR = address;            // Set EEPROM address
+    EECR |= (1 << EERE);       // Start EEPROM read
+    return EEDR;               // Return data from data register
+}
+
 void printEnergyUsage(EnergyUsage usage) {
     Serial.println("----- Energy Usage Data -----");
-    
+
     Serial.print("Fan Status: ");
     Serial.println(usage.fanStatus ? "ON" : "OFF"); // Print fan status
 
@@ -161,13 +133,13 @@ void printEnergyUsage(EnergyUsage usage) {
     Serial.println(usage.lightStatus ? "ON" : "OFF"); // Print light status
 
     Serial.print("Fan Duration (min): ");
-    Serial.println(usage.fanDuration); // Print how long the fan has been ON
+    Serial.println(usage.fanDuration); // Print fan ON duration
 
     Serial.print("Light Duration (min): ");
-    Serial.println(usage.lightDuration); // Print how long the light has been ON
+    Serial.println(usage.lightDuration); // Print light ON duration
 
     Serial.print("Timestamp (min): ");
-    Serial.println(usage.timestamp); // Print current timestamp
-    
+    Serial.println(usage.timestamp); // Print timestamp
+
     Serial.println("-----------------------------");
 }
